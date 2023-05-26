@@ -343,41 +343,36 @@ namespace QuantConnect.Python
         /// <returns>pandas.DataFrame object</returns>
         public PyObject ToPandasDataFrame(int levels = 2)
         {
-            var list = Enumerable.Repeat<PyObject>(_empty, 5).ToList();
-            list[3] = _symbol.ID.ToString().ToPython();
-
-            if (_symbol.SecurityType == SecurityType.Future)
-            {
-                list[0] = _symbol.ID.Date.ToPython();
-            }
-            else if (_symbol.SecurityType.IsOption())
-            {
-                list[0] = _symbol.ID.Date.ToPython();
-                list[1] = _symbol.ID.StrikePrice.ToPython();
-                list[2] = _symbol.ID.OptionRight.ToString().ToPython();
-            }
+            List<PyObject> list;
+            var symbol = _symbol.ID.ToString().ToPython();
 
             // Create the index labels
             var names = _defaultNames;
             if (levels == 2)
             {
+                // symbol, time
                 names = _level2Names;
-                for (int i = 0; i < 3; i++)
-                {
-                    // dispose of existing entry unless it's our static empty
-                    DisposeIfNotEmpty(list[i]);
-                }
-                list.RemoveRange(0, 3);
+                list = new List<PyObject> { symbol, _empty };
             }
-            if (levels == 3)
+            else if (levels == 3)
             {
+                // expiry, symbol, time
                 names = _level3Names;
-                for (int i = 1; i < 2; i++)
+                list = new List<PyObject> { _symbol.ID.Date.ToPython(), symbol, _empty };
+            }
+            else
+            {
+                list = new List<PyObject> { _empty, _empty, _empty, symbol, _empty };
+                if (_symbol.SecurityType == SecurityType.Future)
                 {
-                    // dispose of existing entry unless it's our static empty
-                    DisposeIfNotEmpty(list[i]);
+                    list[0] = _symbol.ID.Date.ToPython();
                 }
-                list.RemoveRange(1, 2);
+                else if (_symbol.SecurityType.IsOption())
+                {
+                    list[0] = _symbol.ID.Date.ToPython();
+                    list[1] = _symbol.ID.StrikePrice.ToPython();
+                    list[2] = _symbol.ID.OptionRight.ToString().ToPython();
+                }
             }
 
             // creating the pandas MultiIndex is expensive so we keep a cash
@@ -388,8 +383,8 @@ namespace QuantConnect.Python
                 using var pyDict = new PyDict();
                 foreach (var kvp in _series)
                 {
+                    if (kvp.Value.ShouldFilter) continue;
                     var values = kvp.Value.Values;
-                    if (values.All(Filter)) continue;
 
                     if (!indexCache.TryGetValue(kvp.Value.Times, out var index))
                     {
@@ -435,17 +430,6 @@ namespace QuantConnect.Python
 
                 return result;
             }
-        }
-
-        /// <summary>
-        /// Will determine if the given object should be used to create the pandas data frame or not
-        /// </summary>
-        private static bool Filter(object x)
-        {
-            var isNaNOrZero = x is double && ((double)x).IsNaNOrZero();
-            var isNullOrWhiteSpace = x is string && string.IsNullOrWhiteSpace((string)x);
-            var isFalse = x is bool && !(bool)x;
-            return x == null || isNaNOrZero || isNullOrWhiteSpace || isFalse;
         }
 
         /// <summary>
@@ -608,13 +592,57 @@ namespace QuantConnect.Python
 
         private class Serie
         {
+            public bool ShouldFilter { get; set; } = true;
             public List<DateTime> Times { get; set; } = new();
             public List<object> Values { get; set; } = new();
 
             public void Add(DateTime time, object input)
             {
+                var value = input is decimal ? input.ConvertInvariant<double>() : input;
+                if (ShouldFilter)
+                {
+                    // we need at least 1 valid entry for the series not to get filtered
+                    if (value is double)
+                    {
+                        if (!((double)value).IsNaNOrZero())
+                        {
+                            ShouldFilter = false;
+                        }
+                    }
+                    else if (value is string)
+                    {
+                        if (!string.IsNullOrWhiteSpace((string)value))
+                        {
+                            ShouldFilter = false;
+                        }
+                    }
+                    else if (value is bool)
+                    {
+                        if ((bool)value)
+                        {
+                            ShouldFilter = false;
+                        }
+                    }
+                    else if (value != null)
+                    {
+                        ShouldFilter = false;
+                    }
+                }
+
                 Times.Add(time);
-                Values.Add(input is decimal ? input.ConvertInvariant<double>() : input);
+                Values.Add(value);
+            }
+
+            public void Add(DateTime time, decimal input)
+            {
+                var value = input.ConvertInvariant<double>();
+                if (ShouldFilter && !value.IsNaNOrZero())
+                {
+                    ShouldFilter = false;
+                }
+
+                Times.Add(time);
+                Values.Add(value);
             }
         }
     }

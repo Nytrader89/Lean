@@ -58,11 +58,16 @@ namespace QuantConnect.Python
         public PyObject GetDataFrame(IEnumerable<Slice> data, Type dataType = null)
         {
             var maxLevels = 0;
-            var sliceDataDict = new Dictionary<Symbol, PandasData>();
+            var sliceDataDict = new Dictionary<SecurityIdentifier, PandasData>();
+
+            // if no data type is requested we check all
+            var requestedTick = dataType == null || dataType == typeof(Tick) || dataType == typeof(OpenInterest);
+            var requestedTradeBar = dataType == null || dataType == typeof(TradeBar);
+            var requestedQuoteBar = dataType == null || dataType == typeof(QuoteBar);
 
             foreach (var slice in data)
             {
-                AddSliceDataTypeDataToDict(slice, dataType, sliceDataDict, ref maxLevels);
+                AddSliceDataTypeDataToDict(slice, requestedTick, requestedTradeBar, requestedQuoteBar, sliceDataDict, ref maxLevels);
             }
 
             using (Py.GIL())
@@ -220,12 +225,12 @@ namespace QuantConnect.Python
         /// Gets the <see cref="PandasData"/> for the given symbol if it exists in the dictionary, otherwise it creates a new instance with the
         /// given base data and adds it to the dictionary
         /// </summary>
-        private PandasData GetPandasDataValue(IDictionary<Symbol, PandasData> sliceDataDict, Symbol symbol, object data, ref int maxLevels)
+        private PandasData GetPandasDataValue(IDictionary<SecurityIdentifier, PandasData> sliceDataDict, Symbol symbol, object data, ref int maxLevels)
         {
             PandasData value;
-            if (!sliceDataDict.TryGetValue(symbol, out value))
+            if (!sliceDataDict.TryGetValue(symbol.ID, out value))
             {
-                sliceDataDict.Add(symbol, value = new PandasData(data));
+                sliceDataDict[symbol.ID] = value = new PandasData(data);
                 maxLevels = Math.Max(maxLevels, value.Levels);
             }
 
@@ -235,12 +240,13 @@ namespace QuantConnect.Python
         /// <summary>
         /// Adds each slice data corresponding to the requested data type to the pandas data dictionary
         /// </summary>
-        private void AddSliceDataTypeDataToDict(Slice slice, Type dataType, IDictionary<Symbol, PandasData> sliceDataDict, ref int maxLevels)
+        private void AddSliceDataTypeDataToDict(Slice slice, bool requestedTick, bool requestedTradeBar, bool requestedQuoteBar, IDictionary<SecurityIdentifier, PandasData> sliceDataDict, ref int maxLevels)
         {
-            var isTick = dataType == null || dataType == typeof(Tick) || dataType == typeof(OpenInterest);
-            HashSet<SecurityIdentifier> _addedBars = new();
-            foreach (var baseData in slice.AllData)
+            HashSet<SecurityIdentifier> _addedBars = null;
+
+            for (int i = 0; i < slice.AllData.Count; i++)
             {
+                var baseData = slice.AllData[i];
                 var value = GetPandasDataValue(sliceDataDict, baseData.Symbol, baseData, ref maxLevels);
 
                 if (value.IsCustomData)
@@ -249,25 +255,30 @@ namespace QuantConnect.Python
                 }
                 else
                 {
-                    var tick = isTick ? baseData as Tick : null;
+                    var tick = requestedTick ? baseData as Tick : null;
                     TradeBar tradeBar = null;
                     QuoteBar quoteBar = null;
                     if(tick == null)
                     {
-                        if (dataType == null && !_addedBars.Add(baseData.Symbol.ID))
+                        // we add both quote and trade bars for each symbol at the same time, because they share the row in the data frame else it will generate 2 rows per series
+                        if (requestedTradeBar && requestedQuoteBar)
                         {
-                            // we add both quote and trade bars for each symbol at the same time, because they share the row in the data frame
-                            continue;
+                            _addedBars ??= new();
+                            if (!_addedBars.Add(baseData.Symbol.ID))
+                            {
+                                continue;
+                            }
                         }
 
-                        tradeBar = dataType == null || dataType == typeof(TradeBar) ? baseData as TradeBar : null;
+                        // the slice already has the data organized by symbol so let's take advantage of it using Bars/QuoteBars collections
+                        tradeBar = requestedTradeBar ? baseData as TradeBar : null;
                         if (tradeBar != null)
                         {
                             slice.QuoteBars.TryGetValue(tradeBar.Symbol, out quoteBar);
                         }
                         else
                         {
-                            quoteBar = dataType == null || dataType == typeof(QuoteBar) ? baseData as QuoteBar : null;
+                            quoteBar = requestedQuoteBar ? baseData as QuoteBar : null;
                             if (quoteBar != null)
                             {
                                 slice.Bars.TryGetValue(quoteBar.Symbol, out tradeBar);
