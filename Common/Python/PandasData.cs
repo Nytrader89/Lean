@@ -31,6 +31,32 @@ namespace QuantConnect.Python
     /// </summary>
     public class PandasData
     {
+        private const string Open = "open";
+        private const string High = "high";
+        private const string Low = "low";
+        private const string Close = "close";
+        private const string Volume = "volume";
+
+        private const string AskOpen = "askopen";
+        private const string AskHigh = "askhigh";
+        private const string AskLow = "asklow";
+        private const string AskClose = "askclose";
+        private const string AskPrice = "askprice";
+        private const string AskSize = "asksize";
+
+        private const string BidOpen = "bidopen";
+        private const string BidHigh = "bidhigh";
+        private const string BidLow = "bidlow";
+        private const string BidClose = "bidclose";
+        private const string BidPrice = "bidprice";
+        private const string BidSize = "bidsize";
+
+        private const string LastPrice = "lastprice";
+        private const string Quantity = "quantity";
+        private const string Exchange = "exchange";
+        private const string Suspicious = "suspicious";
+        private const string OpenInterest = "openinterest";
+
         // we keep these so we don't need to ask for them each time
         private static PyString _empty;
         private static PyObject _pandas;
@@ -46,13 +72,39 @@ namespace QuantConnect.Python
         private readonly static ConcurrentDictionary<Type, IEnumerable<MemberInfo>> _membersByType = new ();
         private readonly static IReadOnlyList<string> _standardColumns = new string []
         {
-                "open",    "high",    "low",    "close", "lastprice",  "volume",
-            "askopen", "askhigh", "asklow", "askclose",  "askprice", "asksize", "quantity", "suspicious",
-            "bidopen", "bidhigh", "bidlow", "bidclose",  "bidprice", "bidsize", "exchange", "openinterest"
+                Open,    High,    Low,    Close, LastPrice,  Volume,
+            AskOpen, AskHigh, AskLow, AskClose,  AskPrice, AskSize, Quantity, Suspicious,
+            BidOpen, BidHigh, BidLow, BidClose,  BidPrice, BidSize, Exchange, OpenInterest
         };
 
         private readonly Symbol _symbol;
-        private readonly Dictionary<string, Tuple<List<DateTime>, List<object>>> _series;
+        private Serie _open;
+        private Serie _high;
+        private Serie _low;
+        private Serie _close;
+        private Serie _volume;
+
+        private Serie _askopen;
+        private Serie _askhigh;
+        private Serie _asklow;
+        private Serie _askclose;
+        private Serie _askprice;
+        private Serie _asksize;
+
+        private Serie _bidopen;
+        private Serie _bidhigh;
+        private Serie _bidlow;
+        private Serie _bidclose;
+        private Serie _bidprice;
+        private Serie _bidsize;
+
+        private Serie _lastPrice;
+        private Serie _exchange;
+        private Serie _quantity;
+        private Serie _suspicious;
+        private Serie _openInterest;
+
+        private readonly Dictionary<string, Serie> _series;
 
         private readonly IEnumerable<MemberInfo> _members = Enumerable.Empty<MemberInfo>();
 
@@ -153,7 +205,7 @@ namespace QuantConnect.Python
                 columns = customColumns;
             }
 
-            _series = columns.ToDictionary(k => k, v => Tuple.Create(new List<DateTime>(), new List<object>()));
+            _series = columns.ToDictionary(k => k, v => new Serie());
         }
 
         /// <summary>
@@ -211,37 +263,37 @@ namespace QuantConnect.Python
             if (tradeBar != null)
             {
                 var time = tradeBar.EndTime;
-                AddToSeries("open", time, tradeBar.Open);
-                AddToSeries("high", time, tradeBar.High);
-                AddToSeries("low", time, tradeBar.Low);
-                AddToSeries("close", time, tradeBar.Close);
-                AddToSeries("volume", time, tradeBar.Volume);
+                GetSerieWithCache(Open).Add(time, tradeBar.Open);
+                GetSerieWithCache(High).Add(time, tradeBar.High);
+                GetSerieWithCache(Low).Add(time, tradeBar.Low);
+                GetSerieWithCache(Close).Add(time, tradeBar.Close);
+                GetSerieWithCache(Volume).Add(time, tradeBar.Volume);
             }
             if (quoteBar != null)
             {
                 var time = quoteBar.EndTime;
                 if (tradeBar == null)
                 {
-                    AddToSeries("open", time, quoteBar.Open);
-                    AddToSeries("high", time, quoteBar.High);
-                    AddToSeries("low", time, quoteBar.Low);
-                    AddToSeries("close", time, quoteBar.Close);
+                    GetSerieWithCache(Open).Add(time, quoteBar.Open);
+                    GetSerieWithCache(High).Add(time, quoteBar.High);
+                    GetSerieWithCache(Low).Add(time, quoteBar.Low);
+                    GetSerieWithCache(Close).Add(time, quoteBar.Close);
                 }
                 if (quoteBar.Ask != null)
                 {
-                    AddToSeries("askopen", time, quoteBar.Ask.Open);
-                    AddToSeries("askhigh", time, quoteBar.Ask.High);
-                    AddToSeries("asklow", time, quoteBar.Ask.Low);
-                    AddToSeries("askclose", time, quoteBar.Ask.Close);
-                    AddToSeries("asksize", time, quoteBar.LastAskSize);
+                    GetSerieWithCache(AskOpen).Add(time, quoteBar.Ask.Open);
+                    GetSerieWithCache(AskHigh).Add(time, quoteBar.Ask.High);
+                    GetSerieWithCache(AskLow).Add(time, quoteBar.Ask.Low);
+                    GetSerieWithCache(AskClose).Add(time, quoteBar.Ask.Close);
+                    GetSerieWithCache(AskSize).Add(time, quoteBar.LastAskSize);
                 }
                 if (quoteBar.Bid != null)
                 {
-                    AddToSeries("bidopen", time, quoteBar.Bid.Open);
-                    AddToSeries("bidhigh", time, quoteBar.Bid.High);
-                    AddToSeries("bidlow", time, quoteBar.Bid.Low);
-                    AddToSeries("bidclose", time, quoteBar.Bid.Close);
-                    AddToSeries("bidsize", time, quoteBar.LastBidSize);
+                    GetSerieWithCache(BidOpen).Add(time, quoteBar.Bid.Open);
+                    GetSerieWithCache(BidHigh).Add(time, quoteBar.Bid.High);
+                    GetSerieWithCache(BidLow).Add(time, quoteBar.Bid.Low);
+                    GetSerieWithCache(BidClose).Add(time, quoteBar.Bid.Close);
+                    GetSerieWithCache(BidSize).Add(time, quoteBar.LastBidSize);
                 }
             }
             if (tick != null)
@@ -253,33 +305,33 @@ namespace QuantConnect.Python
 
                 if (tick.TickType == TickType.Quote)
                 {
-                    AddToSeries("askprice", time, tick.AskPrice);
-                    AddToSeries("asksize", time, tick.AskSize);
-                    AddToSeries("bidprice", time, tick.BidPrice);
-                    AddToSeries("bidsize", time, tick.BidSize);
+                    GetSerieWithCache(AskPrice).Add(time, tick.AskPrice);
+                    GetSerieWithCache(AskSize).Add(time, tick.AskSize);
+                    GetSerieWithCache(BidPrice).Add(time, tick.BidPrice);
+                    GetSerieWithCache(BidSize).Add(time, tick.BidSize);
                 }
                 else
                 {
                     // Trade and open interest ticks don't have these values, so we'll fill them with null.
-                    AddToSeries("askprice", time, null);
-                    AddToSeries("asksize", time, null);
-                    AddToSeries("bidprice", time, null);
-                    AddToSeries("bidsize", time, null);
+                    GetSerieWithCache(AskPrice).Add(time, null);
+                    GetSerieWithCache(AskSize).Add(time, null);
+                    GetSerieWithCache(BidPrice).Add(time, null);
+                    GetSerieWithCache(BidSize).Add(time, null);
                 }
 
-                AddToSeries("exchange", time, tick.Exchange);
-                AddToSeries("suspicious", time, tick.Suspicious);
-                AddToSeries("quantity", time, tick.Quantity);
+                GetSerieWithCache(Exchange).Add(time, tick.Exchange);
+                GetSerieWithCache(Suspicious).Add(time, tick.Suspicious);
+                GetSerieWithCache(Quantity).Add(time, tick.Quantity);
 
                 if (tick.TickType == TickType.OpenInterest)
                 {
-                    AddToSeries("openinterest", time, tick.Value);
-                    AddToSeries("lastprice", time, null);
+                    GetSerieWithCache(OpenInterest).Add(time, tick.Value);
+                    GetSerieWithCache(LastPrice).Add(time, null);
                 }
                 else
                 {
-                    AddToSeries("lastprice", time, tick.Value);
-                    AddToSeries("openinterest", time, null);
+                    GetSerieWithCache(LastPrice).Add(time, tick.Value);
+                    GetSerieWithCache(OpenInterest).Add(time, null);
                 }
             }
         }
@@ -336,15 +388,15 @@ namespace QuantConnect.Python
                 using var pyDict = new PyDict();
                 foreach (var kvp in _series)
                 {
-                    var values = kvp.Value.Item2;
+                    var values = kvp.Value.Values;
                     if (values.All(Filter)) continue;
 
-                    if (!indexCache.TryGetValue(kvp.Value.Item1, out var index))
+                    if (!indexCache.TryGetValue(kvp.Value.Times, out var index))
                     {
-                        using var tuples = kvp.Value.Item1.Select(time => CreateTupleIndex(time, list)).ToPyList();
+                        using var tuples = kvp.Value.Times.Select(time => CreateTupleIndex(time, list)).ToPyList();
                         using var namesDic = Py.kw("names", names);
 
-                        indexCache[kvp.Value.Item1] = index = _multiIndexFactory.Invoke(new[] { tuples }, namesDic);
+                        indexCache[kvp.Value.Times] = index = _multiIndexFactory.Invoke(new[] { tuples }, namesDic);
 
                         foreach (var pyObject in tuples)
                         {
@@ -425,16 +477,120 @@ namespace QuantConnect.Python
         /// <param name="input"><see cref="Object"/> to add to the value associated with the specific key. Can be null.</param>
         private void AddToSeries(string key, DateTime time, object input)
         {
-            Tuple<List<DateTime>, List<object>> value;
-            if (_series.TryGetValue(key, out value))
+            var serie = GetSerieWithCache(key);
+            serie.Add(time, input);
+        }
+
+        private Serie GetSerieWithCache(string key)
+        {
+            Serie serie;
+            switch (key)
             {
-                value.Item1.Add(time);
-                value.Item2.Add(input is decimal ? input.ConvertInvariant<double>() : input);
+                case Open:
+                    _open ??= GetSerie(key);
+                    serie = _open;
+                    break;
+                case High:
+                    _high ??= GetSerie(key);
+                    serie = _high;
+                    break;
+                case Low:
+                    _low ??= GetSerie(key);
+                    serie = _low;
+                    break;
+                case Close:
+                    _close ??= GetSerie(key);
+                    serie = _close;
+                    break;
+                case Volume:
+                    _volume ??= GetSerie(key);
+                    serie = _volume;
+                    break;
+
+                case AskOpen:
+                    _askopen ??= GetSerie(key);
+                    serie = _askopen;
+                    break;
+                case AskHigh:
+                    _askhigh ??= GetSerie(key);
+                    serie = _askhigh;
+                    break;
+                case AskLow:
+                    _asklow ??= GetSerie(key);
+                    serie = _asklow;
+                    break;
+                case AskClose:
+                    _askclose ??= GetSerie(key);
+                    serie = _askclose;
+                    break;
+                case AskSize:
+                    _asksize ??= GetSerie(key);
+                    serie = _asksize;
+                    break;
+                case AskPrice:
+                    _askprice ??= GetSerie(key);
+                    serie = _askprice;
+                    break;
+
+                case BidOpen:
+                    _bidopen ??= GetSerie(key);
+                    serie = _bidopen;
+                    break;
+                case BidHigh:
+                    _bidhigh ??= GetSerie(key);
+                    serie = _bidhigh;
+                    break;
+                case BidLow:
+                    _bidlow ??= GetSerie(key);
+                    serie = _bidlow;
+                    break;
+                case BidClose:
+                    _bidclose ??= GetSerie(key);
+                    serie = _bidclose;
+                    break;
+                case BidSize:
+                    _bidsize ??= GetSerie(key);
+                    serie = _bidsize;
+                    break;
+                case BidPrice:
+                    _bidprice ??= GetSerie(key);
+                    serie = _bidprice;
+                    break;
+
+                case LastPrice:
+                    _lastPrice ??= GetSerie(key);
+                    serie = _lastPrice;
+                    break;
+                case Exchange:
+                    _exchange ??= GetSerie(key);
+                    serie = _exchange;
+                    break;
+                case Quantity:
+                    _quantity ??= GetSerie(key);
+                    serie = _quantity;
+                    break;
+                case OpenInterest:
+                    _openInterest ??= GetSerie(key);
+                    serie = _openInterest;
+                    break;
+                case Suspicious:
+                    _suspicious ??= GetSerie(key);
+                    serie = _suspicious;
+                    break;
+                default:
+                    serie = GetSerie(key);
+                    break;
             }
-            else
+            return serie;
+        }
+
+        private Serie GetSerie(string key)
+        {
+            if (!_series.TryGetValue(key, out var value))
             {
-                throw new ArgumentException($"PandasData.AddToSeries(): {Messages.PandasData.KeyNotFoundInSeries(key)}");
+                throw new ArgumentException($"PandasData.GetSerie(): {Messages.PandasData.KeyNotFoundInSeries(key)}");
             }
+            return value;
         }
 
         /// <summary>
@@ -448,6 +604,18 @@ namespace QuantConnect.Python
             return baseType.IsAssignableFrom(type)
                 ? baseType.GetProperties().Select(x => x.Name.ToLowerInvariant())
                 : Enumerable.Empty<string>();
+        }
+
+        private class Serie
+        {
+            public List<DateTime> Times { get; set; } = new();
+            public List<object> Values { get; set; } = new();
+
+            public void Add(DateTime time, object input)
+            {
+                Times.Add(time);
+                Values.Add(input is decimal ? input.ConvertInvariant<double>() : input);
+            }
         }
     }
 }

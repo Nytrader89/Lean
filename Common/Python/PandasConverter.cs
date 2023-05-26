@@ -238,7 +238,7 @@ namespace QuantConnect.Python
         private void AddSliceDataTypeDataToDict(Slice slice, Type dataType, IDictionary<Symbol, PandasData> sliceDataDict, ref int maxLevels)
         {
             var isTick = dataType == null || dataType == typeof(Tick) || dataType == typeof(OpenInterest);
-            HashSet<Symbol> _addedBars = new();
+            HashSet<SecurityIdentifier> _addedBars = new();
             foreach (var baseData in slice.AllData)
             {
                 var value = GetPandasDataValue(sliceDataDict, baseData.Symbol, baseData, ref maxLevels);
@@ -254,13 +254,15 @@ namespace QuantConnect.Python
                     QuoteBar quoteBar = null;
                     if(tick == null)
                     {
+                        if (dataType == null && !_addedBars.Add(baseData.Symbol.ID))
+                        {
+                            // we add both quote and trade bars for each symbol at the same time, because they share the row in the data frame
+                            continue;
+                        }
+
                         tradeBar = dataType == null || dataType == typeof(TradeBar) ? baseData as TradeBar : null;
                         if (tradeBar != null)
                         {
-                            if(!_addedBars.Add(tradeBar.Symbol))
-                            {
-                                continue;
-                            }
                             slice.QuoteBars.TryGetValue(tradeBar.Symbol, out quoteBar);
                         }
                         else
@@ -268,10 +270,6 @@ namespace QuantConnect.Python
                             quoteBar = dataType == null || dataType == typeof(QuoteBar) ? baseData as QuoteBar : null;
                             if (quoteBar != null)
                             {
-                                if (!_addedBars.Add(quoteBar.Symbol))
-                                {
-                                    continue;
-                                }
                                 slice.Bars.TryGetValue(quoteBar.Symbol, out tradeBar);
                             }
                         }
